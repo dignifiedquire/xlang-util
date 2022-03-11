@@ -166,7 +166,7 @@ func (r *Channel) Send(msg *Message) *Message {
 
 		backoff.Spin()
 	}
-	
+
 	return nil
 }
 
@@ -196,8 +196,8 @@ func (c *Channel) startRecv(token *Token) bool {
 
 	for {
 		// Deconstruct the head.
-		index := head & uint64(c.inner.mark_bit - 1)
-		lap := head & ^uint64(c.inner.one_lap - 1)
+		index := head & uint64(c.inner.mark_bit-1)
+		lap := head & ^uint64(c.inner.one_lap-1)
 
 		// Inspect the corresponding slot.
 		offset := uintptr(index) * slotSize
@@ -206,9 +206,9 @@ func (c *Channel) startRecv(token *Token) bool {
 		stamp := atomicLoadUint64(&slot.stamp)
 
 		// If the stamp is ahead of the head by 1, we may attempt to pop.
-		if head + 1 == stamp {
+		if head+1 == stamp {
 			var new uint64
-			if index + 1 < uint64(c.inner.cap) {
+			if index+1 < uint64(c.inner.cap) {
 				// Same lap, incremented index.
 				// Set to `{ lap: lap, mark: 0, index: index + 1 }`.
 				new = head + 1
@@ -224,7 +224,7 @@ func (c *Channel) startRecv(token *Token) bool {
 				token.slot = slot
 				token.stamp = C.ulonglong(head + uint64(c.inner.one_lap))
 				return true
-			} 
+			}
 			head = atomicLoadUint64(&c.inner.head)
 			backoff.Spin()
 		} else if stamp == head {
@@ -233,7 +233,7 @@ func (c *Channel) startRecv(token *Token) bool {
 			// If the tail equals the head, that means the channel is empty.
 			if tail & ^uint64(c.inner.mark_bit) == head {
 				// If the channel is disconnected..
-				if tail & uint64(c.inner.mark_bit) != 0 {
+				if tail&uint64(c.inner.mark_bit) != 0 {
 					// ..then receive an error.
 					token.slot = nil
 					token.stamp = 0
@@ -296,8 +296,8 @@ func (c *Channel) Len() uint64 {
 
 		// If the tail didn't change, we've got consistent values to work with.
 		if atomicLoadUint64(&c.inner.tail) == tail {
-			hix := head & uint64(c.inner.mark_bit - 1)
-			tix := tail & uint64(c.inner.mark_bit - 1)
+			hix := head & uint64(c.inner.mark_bit-1)
+			tix := tail & uint64(c.inner.mark_bit-1)
 
 			if hix < tix {
 				return tix - hix
@@ -312,7 +312,6 @@ func (c *Channel) Len() uint64 {
 		}
 	}
 }
-
 
 type Message = C.struct_Message
 
@@ -340,7 +339,7 @@ func (msg *Message) Bytes() []byte {
 		return nil
 	}
 
-	slice := (*[1<<30]byte)(unsafe.Pointer(msg.ptr))[:msg.len]
+	slice := (*[1 << 30]byte)(unsafe.Pointer(msg.ptr))[:msg.len]
 	sliceHeader := (*reflect.SliceHeader)(unsafe.Pointer(&slice))
 	sliceHeader.Cap = int(msg.len)
 	return slice

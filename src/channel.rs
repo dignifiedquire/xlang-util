@@ -1,10 +1,15 @@
+//! Bounded channel implementation based on https://github.com/crossbeam-rs/crossbeam/blob/master/crossbeam-channel/src/flavors/array.rs
+//!
+//! Modified to be able to be used between both Go and Rust
+
+// Current restrictions:
+// - All atomic accesses must be done usin g`Ordering::SeqCst`, as this is the only ordering that `sync/atomics` for go lang supports.
+
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, Ordering::SeqCst};
 use core::{mem, ptr};
 
 use crossbeam_utils::Backoff;
-
-// Only `Ordering::SeqCst` is allowed to be used, as this is the only ordering that `sync/atomics` for go lang supports.
 
 /// Helper to explicitly transfer a slice of bytes across FFI bounds.
 #[derive(Debug, PartialEq)]
