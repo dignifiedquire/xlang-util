@@ -307,11 +307,8 @@ impl Channel {
                 }
             }
 
-            // Prepare for blocking until a receiver wakes us up.
-            // TODO: register on sendres
-            // self.senders.register(oper, cx);
-
-            // TODO: spin
+            // TODO: can this be better?
+            backoff.spin();
         }
     }
 
@@ -432,10 +429,8 @@ impl Channel {
                 }
             }
 
-            // TODO: register
-            // self.receivers.register(oper, cx);
-
-            // TODO: spin
+            // TODO: improve
+            backoff.spin();
         }
     }
 

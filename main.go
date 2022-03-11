@@ -9,6 +9,7 @@ uintptr_t slotSize() {
 */
 import "C"
 
+import "reflect"
 import "fmt"
 import "sync/atomic"
 import "runtime"
@@ -50,9 +51,7 @@ func atomicLoadUint64(val *C.ulonglong) uint64 {
 func (r *Channel) startSend(token *C.struct_Token) bool {
 	backoff := golang_util.NewBackoff()
 	tail := atomicLoadUint64(&r.inner.tail)
-	fmt.Println("tail", tail, r.inner.tail)
 
-	fmt.Println("startSend")
 	for {
 		// Check if the channel is disconnected.
 		markBitSet := uint64(0)
@@ -60,7 +59,6 @@ func (r *Channel) startSend(token *C.struct_Token) bool {
 			markBitSet = 1
 		}
 		if tail&markBitSet != 0 {
-			fmt.Println("disconnected")
 			token.slot = nil
 			token.stamp = 0
 			return true
@@ -72,14 +70,12 @@ func (r *Channel) startSend(token *C.struct_Token) bool {
 
 		// Inspect the corresponding slot.
 		offset := uintptr(index) * slotSize
-		fmt.Println("offset", offset, slotSize, index, tail, r.inner.mark_bit)
 		slotPtr := uintptr(unsafe.Pointer(r.inner.buffer)) + offset
 		slot := (*C.struct_Slot)(unsafe.Pointer(slotPtr))
 		stamp := atomicLoadUint64(&slot.stamp)
 
 		// If the tail and the stamp match, we may attempt to push.
 		if tail == stamp {
-			fmt.Println("tail == stamp")
 			var newTail uint64
 			if index+1 < uint64(r.inner.cap) {
 				// Same lap, incremented index.
@@ -94,7 +90,6 @@ func (r *Channel) startSend(token *C.struct_Token) bool {
 
 			// Try moving the tail.
 			if atomic.CompareAndSwapUint64((*uint64)(&r.inner.tail), tail, newTail) {
-				fmt.Println("swapped", slot)
 				// Prepare the token for the folow-up call to `write`.
 				token.slot = slot
 				token.stamp = C.ulonglong(tail + 1)
@@ -103,7 +98,6 @@ func (r *Channel) startSend(token *C.struct_Token) bool {
 			tail = atomicLoadUint64(&r.inner.tail)
 			backoff.Spin()
 		} else if stamp+uint64(r.inner.one_lap) == tail+1 {
-			fmt.Println("lag")
 			head := atomicLoadUint64(&r.inner.head)
 
 			// If the head lags one lap behind the tail as well..
@@ -114,7 +108,6 @@ func (r *Channel) startSend(token *C.struct_Token) bool {
 			backoff.Spin()
 			tail = atomicLoadUint64(&r.inner.tail)
 		} else {
-			// fmt.Println("snooze")
 			// Snooze because we need to wait for the stamp to get updated
 			backoff.Snooze()
 			tail = atomicLoadUint64(&r.inner.tail)
@@ -126,7 +119,6 @@ func (r *Channel) startSend(token *C.struct_Token) bool {
 func (r *Channel) write(token *C.struct_Token, msg *Message) *Message {
 	// If there is no slot, the channel is disconnected.
 	if token.slot == nil {
-		fmt.Println("missing slot")
 		return msg
 	}
 
@@ -137,8 +129,10 @@ func (r *Channel) write(token *C.struct_Token, msg *Message) *Message {
 	return nil
 }
 
-func defaultToken() C.struct_Token {
-	return C.struct_Token{
+type Token = C.struct_Token
+
+func defaultToken() Token {
+	return Token{
 		slot:  nil,
 		stamp: 0,
 	}
@@ -148,11 +142,177 @@ func defaultToken() C.struct_Token {
 func (r *Channel) TrySend(msg *Message) *Message {
 	token := defaultToken()
 	if r.startSend(&token) {
-		fmt.Println("write")
 		return r.write(&token, msg)
 	}
 	return msg
 }
+
+func (r *Channel) Send(msg *Message) *Message {
+	token := defaultToken()
+	for {
+		// Try sending a message several times.
+		backoff := golang_util.NewBackoff()
+		for {
+			if r.startSend(&token) {
+				return r.write(&token, msg)
+			}
+		}
+
+		if backoff.IsCompleted() {
+			break
+		} else {
+			backoff.Snooze()
+		}
+
+		backoff.Spin()
+	}
+	
+	return nil
+}
+
+func (c *Channel) IsDisconnected() bool {
+	markBitSet := uint64(0)
+	if c.inner.mark_bit != 0 {
+		markBitSet = 1
+	}
+	return atomicLoadUint64(&c.inner.mark_bit)&markBitSet != 0
+}
+
+func (c *Channel) read(token *Token) *Message {
+	if token.slot == nil {
+		return nil
+	}
+
+	slot := token.slot
+	msg := slot.msg
+	atomic.StoreUint64((*uint64)(&slot.stamp), uint64(token.stamp))
+
+	return msg
+}
+
+func (c *Channel) startRecv(token *Token) bool {
+	backoff := golang_util.NewBackoff()
+	head := atomicLoadUint64(&c.inner.head)
+
+	for {
+		// Deconstruct the head.
+		index := head & uint64(c.inner.mark_bit - 1)
+		lap := head & ^uint64(c.inner.one_lap - 1)
+
+		// Inspect the corresponding slot.
+		offset := uintptr(index) * slotSize
+		slotPtr := uintptr(unsafe.Pointer(c.inner.buffer)) + offset
+		slot := (*C.struct_Slot)(unsafe.Pointer(slotPtr))
+		stamp := atomicLoadUint64(&slot.stamp)
+
+		// If the stamp is ahead of the head by 1, we may attempt to pop.
+		if head + 1 == stamp {
+			var new uint64
+			if index + 1 < uint64(c.inner.cap) {
+				// Same lap, incremented index.
+				// Set to `{ lap: lap, mark: 0, index: index + 1 }`.
+				new = head + 1
+			} else {
+				// One lap forward, index wraps around to zero.
+				// Set to `{ lap: lap.wrapping_add(1), mark: 0, index: 0 }`.
+				new = lap + uint64(c.inner.one_lap)
+			}
+
+			// Try moving the head.
+			if atomic.CompareAndSwapUint64((*uint64)(&c.inner.head), head, new) {
+				// Prepare the token fo the follow-up call to `read`
+				token.slot = slot
+				token.stamp = C.ulonglong(head + uint64(c.inner.one_lap))
+				return true
+			} 
+			head = atomicLoadUint64(&c.inner.head)
+			backoff.Spin()
+		} else if stamp == head {
+			tail := atomicLoadUint64(&c.inner.tail)
+
+			// If the tail equals the head, that means the channel is empty.
+			if tail & ^uint64(c.inner.mark_bit) == head {
+				// If the channel is disconnected..
+				if tail & uint64(c.inner.mark_bit) != 0 {
+					// ..then receive an error.
+					token.slot = nil
+					token.stamp = 0
+					return true
+				}
+				// Otherwise the receive operation is not ready.
+				return false
+			}
+
+			backoff.Spin()
+			head = atomicLoadUint64(&c.inner.head)
+		} else {
+			// Snooze because we need to wait for the stamp to get updated.
+			backoff.Snooze()
+			head = atomicLoadUint64(&c.inner.head)
+		}
+	}
+}
+
+func (c *Channel) TryRecv() *Message {
+	token := defaultToken()
+
+	if c.startRecv(&token) {
+		return c.read(&token)
+	}
+
+	return nil
+}
+
+func (c *Channel) Recv() *Message {
+	token := defaultToken()
+
+	for {
+		// Try receiving a message several times.
+		backoff := golang_util.NewBackoff()
+		for {
+			if c.startRecv(&token) {
+				return c.read(&token)
+			}
+
+			if backoff.IsCompleted() {
+				break
+			} else {
+				backoff.Snooze()
+			}
+		}
+
+		backoff.Spin()
+	}
+
+	return nil
+}
+
+// Len returns the current number of messages inside the channel.
+func (c *Channel) Len() uint64 {
+	for {
+		// Load the tail, then load the head
+		tail := atomicLoadUint64(&c.inner.tail)
+		head := atomicLoadUint64(&c.inner.head)
+
+		// If the tail didn't change, we've got consistent values to work with.
+		if atomicLoadUint64(&c.inner.tail) == tail {
+			hix := head & uint64(c.inner.mark_bit - 1)
+			tix := tail & uint64(c.inner.mark_bit - 1)
+
+			if hix < tix {
+				return tix - hix
+			}
+			if hix > tix {
+				return uint64(c.inner.cap) - hix + tix
+			}
+			if tail & ^uint64(c.inner.mark_bit) == head {
+				return 0
+			}
+			return uint64(c.inner.cap)
+		}
+	}
+}
+
 
 type Message = C.struct_Message
 
@@ -175,15 +335,37 @@ func (msg *Message) Len() uint64 {
 	return uint64(msg.len)
 }
 
+func (msg *Message) Bytes() []byte {
+	if msg.ptr == nil {
+		return nil
+	}
+
+	slice := (*[1<<30]byte)(unsafe.Pointer(msg.ptr))[:msg.len]
+	sliceHeader := (*reflect.SliceHeader)(unsafe.Pointer(&slice))
+	sliceHeader.Cap = int(msg.len)
+	return slice
+}
+
 func main() {
 	c := NewChannel(10)
 	msg := NewMessage([]byte("helloworld"))
 
-	fmt.Println("trying to send message")
-
-	if c.TrySend(&msg) == nil {
-		fmt.Println("Sent message")
-	} else {
+	fmt.Println("trying to send message", string(msg.Bytes()))
+	if c.TrySend(&msg) != nil {
 		fmt.Println("Failed to send message")
+		return
 	}
+
+	if c.Len() != 1 {
+		fmt.Println("Invalid length", c.Len())
+		return
+	}
+
+	newMsg := c.TryRecv()
+	if newMsg == nil {
+		fmt.Println("Failed to recv messaeg")
+		return
+	}
+
+	fmt.Println("received", string(newMsg.Bytes()))
 }
