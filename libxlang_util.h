@@ -27,7 +27,7 @@ typedef struct Slot {
   /**
    * The message in this slot.
    */
-  struct Message *msg;
+  struct Message msg;
 } Slot;
 
 typedef struct Channel {
@@ -73,6 +73,12 @@ struct Channel *new_channel(uint32_t cap);
 
 void drop_channel(struct Channel *channel_ptr);
 
+struct Message* channel_try_recv(struct Channel *channel_ptr);
+
 uint8_t *new_message_bytes(const uint8_t *ptr, uint64_t len);
+struct Message *new_message(const uint8_t *ptr, uint64_t len);
 
 void drop_message(struct Message *msg);
+void drop_message_bytes(uint8_t *ptr, uint64_t len);
+
+uintptr_t slotSize();
