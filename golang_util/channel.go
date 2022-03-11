@@ -10,7 +10,7 @@ import "reflect"
 import "sync/atomic"
 import "runtime"
 import "unsafe"
-import "fmt"
+// import "fmt"
 
 var slotSize uintptr
 
@@ -69,7 +69,7 @@ func (r *Channel) startSend(token *C.struct_Token) bool {
 		slotPtr := uintptr(unsafe.Pointer(r.inner.buffer)) + offset
 		slot := (*C.struct_Slot)(unsafe.Pointer(slotPtr))
 		stamp := atomicLoadUint64(&slot.stamp)
-		fmt.Println("wrote to slot", slotPtr, index, slotSize, r.inner.buffer)
+		// fmt.Println("wrote to slot", slotPtr, index, slotSize, r.inner.buffer)
 
 		// If the tail and the stamp match, we may attempt to push.
 		if tail == stamp {
@@ -88,7 +88,7 @@ func (r *Channel) startSend(token *C.struct_Token) bool {
 			// Try moving the tail.
 			if atomic.CompareAndSwapUint64((*uint64)(&r.inner.tail), tail, newTail) {
 				// Prepare the token for the folow-up call to `write`.
-				fmt.Println("storing tail", slot, tail, newTail)
+				// fmt.Println("storing tail", slot, tail, newTail)
 				token.slot = slot
 				token.stamp = C.ulonglong(tail + 1)
 				return true
@@ -120,10 +120,10 @@ func (r *Channel) write(token *C.struct_Token, msg *Message) *Message {
 		return msg
 	}
 
-	fmt.Println("writing to slot", token, msg, token.slot)
+	// fmt.Println("writing to slot", token, msg, token.slot)
 	token.slot.msg = *msg
 	atomic.StoreUint64((*uint64)(&token.slot.stamp), uint64(token.stamp))
-	fmt.Println("stored", token.slot)
+	// fmt.Println("stored", token.slot)
 	return nil
 }
 
@@ -139,7 +139,7 @@ func defaultToken() Token {
 // return nil on success, message on error
 func (r *Channel) TrySend(msg *Message) *Message {
 	token := defaultToken()
-	fmt.Println("sending", msg)
+	// fmt.Println("sending", msg)
 	if r.startSend(&token) {
 		return r.write(&token, msg)
 	}
@@ -323,14 +323,18 @@ func (c *Channel) Len() uint64 {
 
 type Message = C.struct_Message
 
-func NewMessage(bytes []byte) *Message {
+func NewMessage(bytes []byte) Message {
 	l := C.ulonglong(len(bytes))
-	msg := C.new_message((*C.uchar)(unsafe.Pointer(&bytes[0])), l)
+	ptr := C.new_message_bytes((*C.uchar)(unsafe.Pointer(&bytes[0])), l)
 
 	// runtime.SetFinalizer(&msg, func(msg *Message) {
 	// 	C.drop_message_bytes(msg.ptr, msg.len)
 	// })
-	return msg
+	
+	return Message {
+		ptr: ptr,
+		len: l,
+	}
 }
 
 func (msg *Message) Len() uint64 {

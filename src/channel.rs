@@ -332,11 +332,10 @@ impl Channel {
         }
 
         let slot: &Slot = &*(token.slot as *const Slot);
-        dbg!(&token);
         // Read the message from the slot and update the stamp.
-        let msg = dbg!(slot).msg.get().read();
+        let msg = slot.msg.get().read();
         slot.stamp.store(token.stamp, SeqCst);
-        dbg!(&msg);
+
         Ok(msg)
     }
 
@@ -344,22 +343,14 @@ impl Channel {
     fn start_recv(&self, token: &mut Token) -> bool {
         let backoff = Backoff::new();
         let mut head = self.head.load(SeqCst);
-        dbg!(&head);
         loop {
             // Deconstruct the head.
             let index = head & (self.mark_bit - 1);
             let lap = head & !(self.one_lap - 1);
 
             // Inspect the corresponding slot.
-            dbg!(
-                unsafe { self.buffer.add(index.try_into().unwrap()) },
-                self.buffer,
-                index,
-                std::mem::size_of::<Slot>(),
-            );
             let slot = unsafe { &*self.buffer.add(index.try_into().unwrap()) };
             let stamp = slot.stamp.load(SeqCst);
-            dbg!(&slot, slot.msg.get());
 
             // If the the stamp is ahead of the head by 1, we may attempt to pop.
             if head + 1 == stamp {
@@ -418,10 +409,7 @@ impl Channel {
         let token = &mut Token::default();
 
         if self.start_recv(token) {
-            unsafe {
-                self.read(dbg!(token))
-                    .map_err(|_| TryRecvError::Disconnected)
-            }
+            unsafe { self.read(token).map_err(|_| TryRecvError::Disconnected) }
         } else {
             Err(TryRecvError::Empty)
         }

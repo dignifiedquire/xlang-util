@@ -17,7 +17,7 @@ pub extern "C" fn channel_try_recv(channel_ptr: *mut Channel) -> *mut Message {
     assert!(!channel_ptr.is_null());
     let channel = unsafe { Box::from_raw(channel_ptr) };
     match channel.try_recv() {
-        Ok(msg) => Box::into_raw(Box::new(dbg!(msg))),
+        Ok(msg) => Box::into_raw(Box::new(msg)),
         Err(_) => core::ptr::null_mut(),
     }
 }

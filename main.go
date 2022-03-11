@@ -8,7 +8,7 @@ func main() {
 	msg := golang_util.NewMessage([]byte("helloworld"))
 
 	fmt.Println("trying to send message", string(msg.Bytes()))
-	if c.TrySend(msg) != nil {
+	if c.TrySend(&msg) != nil {
 		fmt.Println("Failed to send message")
 		return
 	}
@@ -30,7 +30,7 @@ func main() {
 
 	// msg2 := golang_util.NewMessage([]byte("hellorust"))
 
-	// if c.TrySend(msg2) != nil {
+	// if c.TrySend(&msg2) != nil {
 	// 	fmt.Println("Failed to send message")
 	// 	return
 	// }
