@@ -6,7 +6,10 @@
 /**
  * Helper to explicitly transfer a slice of bytes across FFI bounds.
  */
-typedef struct Message Message;
+typedef struct Message {
+  uint8_t *ptr;
+  uint64_t len;
+} Message;
 
 typedef struct Token {
   struct Slot *slot;

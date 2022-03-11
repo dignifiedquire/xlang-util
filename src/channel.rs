@@ -2,7 +2,7 @@ use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, Ordering::SeqCst};
 use core::{mem, ptr};
 
-use crossbeam_utils::{Backoff, CachePadded};
+use crossbeam_utils::Backoff;
 
 // Only `Ordering::SeqCst` is allowed to be used, as this is the only ordering that `sync/atomics` for go lang supports.
 
@@ -127,7 +127,8 @@ pub struct Channel {
     /// represent the lap. The mark bit in the head is always zero.
     ///
     /// Messages are popped from the head of the channel.
-    head: CachePadded<AtomicU64>,
+    // TODO: add cache padding back
+    head: AtomicU64,
 
     /// The tail of the channel.
     ///
@@ -136,7 +137,8 @@ pub struct Channel {
     /// represent the lap. The mark bit indicates that the channel is disconnected.
     ///
     /// Messages are pushed into the tail of the channel.
-    tail: CachePadded<AtomicU64>,
+    // TODO: add cache padding back
+    tail: AtomicU64,
 
     /// The buffer holding slots.
     buffer: *mut Slot,
@@ -187,8 +189,8 @@ impl Channel {
             cap,
             one_lap,
             mark_bit,
-            head: CachePadded::new(AtomicU64::new(head)),
-            tail: CachePadded::new(AtomicU64::new(tail)),
+            head: AtomicU64::new(head),
+            tail: AtomicU64::new(tail),
         }
     }
 

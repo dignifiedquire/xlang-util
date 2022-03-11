@@ -2,9 +2,8 @@ package golang_util
 
 import "runtime"
 
-const spinLimit  = 6;
-const yieldLimit = 10;
-
+const spinLimit = 6
+const yieldLimit = 10
 
 // Backoff performs exponential backoff in spin loops.
 type Backoff struct {
@@ -13,7 +12,7 @@ type Backoff struct {
 
 // New creates a new Backoff.
 func NewBackoff() Backoff {
-	return Backoff { step: 0, }
+	return Backoff{step: 0}
 }
 
 func (b *Backoff) Reset() {
@@ -21,7 +20,7 @@ func (b *Backoff) Reset() {
 }
 
 func (b *Backoff) Spin() {
-	for i := 0; i < min(b.step, spinLimit); i ++ {
+	for i := 0; i < min(b.step, spinLimit); i++ {
 		runtime.Gosched()
 	}
 
@@ -32,7 +31,7 @@ func (b *Backoff) Spin() {
 
 func (b *Backoff) Snooze() {
 	if b.step <= spinLimit {
-		for i := 0; i < b.step; i ++ {
+		for i := 0; i < b.step; i++ {
 			runtime.Gosched()
 		}
 	} else {
@@ -51,6 +50,6 @@ func (b *Backoff) IsCompleted() bool {
 func min(a int, b int) int {
 	if a < b {
 		return a
-	} 
+	}
 	return b
 }
