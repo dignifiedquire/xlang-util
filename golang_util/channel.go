@@ -327,14 +327,21 @@ func NewMessage(bytes []byte) Message {
 	l := C.ulonglong(len(bytes))
 	ptr := C.new_message_bytes((*C.uchar)(unsafe.Pointer(&bytes[0])), l)
 
-	// runtime.SetFinalizer(&msg, func(msg *Message) {
-	// 	C.drop_message_bytes(msg.ptr, msg.len)
-	// })
-	
-	return Message {
+	msg := Message {
 		ptr: ptr,
 		len: l,
 	}
+	// runtime.SetFinalizer(&msg, func(msg *Message) {
+	//  	C.drop_message_bytes(msg.ptr, msg.len)
+	// })
+	
+	return msg
+}
+
+func (msg *Message) Drop() {
+	C.drop_message_bytes(msg.ptr, msg.len)
+	msg.ptr = nil
+	msg.len = 0
 }
 
 func (msg *Message) Len() uint64 {

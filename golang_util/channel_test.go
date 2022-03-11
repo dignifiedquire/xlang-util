@@ -12,14 +12,30 @@ func TestNewMessage(t *testing.T) {
 	}
 }
 
-func BenchmarkNewMessage(b *testing.B) {
+func BenchmarkNewMessageCgo(b *testing.B) {
         data := make([]byte, 100)
 	for i := range data {
 		data[i] = 1
 	}
 
+	msgs := make([]golang_util.Message, b.N)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = golang_util.NewMessage(data)
+		msgs[i] = golang_util.NewMessage(data)
+	}
+
+	for i := range msgs {
+		msgs[i].Drop()
+	}
+}
+
+func BenchmarkNewMessageGo(b *testing.B) {
+	msgs := make([][]byte, b.N)
+	for i := 0; i < b.N; i++ {
+		data := make([]byte, 100)
+		for i := range data {
+			data[i] = 1
+		}
+		msgs[i] = data
 	}
 }
