@@ -109,9 +109,8 @@ func TestSendRecvPar(t *testing.T) {
 	done := make(chan bool)
 
 	go func() {
-		for i := 0; i < 10 ; i++ {
+		for i := 0; i < 100 ; i++ {
 			msg := makeMessage(byte(i))
-			defer msg.Drop()
 
 			if c.Send(&msg) != nil {
 				t.Fatalf("failed to send message %v", i)
@@ -120,7 +119,7 @@ func TestSendRecvPar(t *testing.T) {
 	}()
 
 	go func() {
-		for i := 0; i < 10 ; i++ {
+		for i := 0; i < 100 ; i++ {
 			msg := c.Recv()
 			if msg == nil {
 				t.Fatalf("failed to recv message %v", i)
@@ -134,6 +133,7 @@ func TestSendRecvPar(t *testing.T) {
 					t.Fatalf("wrong message bytes received: %v (%v)", bytes, byte(i))
 				}
 			}
+			msg.Drop()
 		}
 		done <- true
 	}()
@@ -142,6 +142,12 @@ func TestSendRecvPar(t *testing.T) {
 }
 
 
+func TestMin(t *testing.T) {
+	if golang_util.Min(5, 3) != 3 {
+		t.Fatalf("invalid min")
+	}
+}
+
 func TestNewMessage(t *testing.T) {
 	data := "helloworld"
 	msg := golang_util.NewMessage(([]byte)(data))
@@ -149,6 +155,7 @@ func TestNewMessage(t *testing.T) {
 		t.Fatalf(`message contains wrong values %s != %s`, data, string(msg.Bytes()))
 	}
 }
+
 
 func BenchmarkNewMessageCgo(b *testing.B) {
         data := make([]byte, 100)
@@ -252,6 +259,7 @@ func BenchmarkByteSliceChannelCap1(b *testing.B) {
 	}()
 
 	msg := makeMessage(10)
+	defer msg.Drop()
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -269,9 +277,12 @@ func BenchmarkByteSliceChannelCap10(b *testing.B) {
 	}()
 
 	msg := makeMessage(10)
+	defer msg.Drop()
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		ch.Send(&msg)
 	}
 }
+
+

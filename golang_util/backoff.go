@@ -7,7 +7,7 @@ const yieldLimit = 10
 
 // Backoff performs exponential backoff in spin loops.
 type Backoff struct {
-	step int
+	step uint
 }
 
 // New creates a new Backoff.
@@ -20,7 +20,7 @@ func (b *Backoff) Reset() {
 }
 
 func (b *Backoff) Spin() {
-	for i := 0; i < min(b.step, spinLimit); i++ {
+	for i := 0; i < 1 << Min(b.step, spinLimit); i++ {
 		runtime.Gosched()
 	}
 
@@ -31,11 +31,14 @@ func (b *Backoff) Spin() {
 
 func (b *Backoff) Snooze() {
 	if b.step <= spinLimit {
-		for i := 0; i < b.step; i++ {
+		for i := uint(0); i < 1 << b.step; i++ {
 			runtime.Gosched()
 		}
 	} else {
-		runtime.Gosched()
+		// we can't actually force the thread to yield, so just spin
+		for i := uint(0); i < 1 << b.step; i++ {
+			runtime.Gosched()
+		}
 	}
 
 	if b.step <= yieldLimit {
@@ -47,7 +50,7 @@ func (b *Backoff) IsCompleted() bool {
 	return b.step > yieldLimit
 }
 
-func min(a int, b int) int {
+func Min(a uint, b uint) uint {
 	if a < b {
 		return a
 	}

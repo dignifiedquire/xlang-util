@@ -487,8 +487,13 @@ impl Drop for Channel {
     }
 }
 
+unsafe impl Send for Channel {}
+unsafe impl Sync for Channel {}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     fn make_message(i: u8) -> Message {
@@ -510,7 +515,46 @@ mod tests {
     }
 
     #[test]
-    fn test_basics() {
+    fn test_basics_do() {
+        let channel = Channel::with_capacity(10);
+        for i in 0..10 {
+            let msg = make_message(i);
+            channel.send(msg).unwrap();
+        }
+
+        for i in 0..10 {
+            let msg = channel.recv().unwrap();
+            assert_eq!(msg_slice(msg), &vec![i; 10]);
+        }
+    }
+
+    #[test]
+    fn test_basics_par() {
+        let channel = Arc::new(Channel::with_capacity(10));
+
+        let sender = Arc::clone(&channel);
+        let receiver = Arc::clone(&channel);
+
+        let a = std::thread::spawn(move || {
+            for i in 0..100 {
+                let msg = make_message(i);
+                sender.send(msg).unwrap();
+            }
+        });
+
+        let b = std::thread::spawn(move || {
+            for i in 0..100 {
+                let msg = receiver.recv().unwrap();
+                assert_eq!(msg_slice(msg), &vec![i; 10]);
+            }
+        });
+
+        a.join().unwrap();
+        b.join().unwrap();
+    }
+
+    #[test]
+    fn test_basics_try() {
         let channel = Channel::with_capacity(10);
         for i in 0..10 {
             let msg = make_message(i);
