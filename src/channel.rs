@@ -11,36 +11,7 @@ use core::{mem, ptr};
 
 use crossbeam_utils::Backoff;
 
-/// Helper to explicitly transfer a slice of bytes across FFI bounds.
-#[derive(Debug, PartialEq)]
-#[repr(C)]
-pub struct Message {
-    /// Pointer to some bytes.
-    ptr: *mut [u8],
-    /// Length of the byte slice.
-    len: u64,
-}
-
-impl AsRef<[u8]> for Message {
-    fn as_ref(&self) -> &[u8] {
-        unsafe {
-            core::slice::from_raw_parts(self.ptr as *const _, usize::try_from(self.len).unwrap())
-        }
-    }
-}
-
-impl Clone for Message {
-    fn clone(&self) -> Self {
-        let b: Box<[u8]> = unsafe { Box::from_raw(self.ptr) };
-        let b2 = b.clone();
-        mem::forget(b);
-
-        Message {
-            ptr: Box::into_raw(b2),
-            len: self.len,
-        }
-    }
-}
+pub type Message = (*mut u8, u64);
 
 #[derive(Debug, PartialEq)]
 pub enum TrySendError {
@@ -64,33 +35,14 @@ pub enum RecvError {
     Disconnected,
 }
 
-impl Message {
-    pub fn from_bytes(buffer: &[u8]) -> Self {
-        let len = buffer.len();
-        let b = buffer.to_vec().into_boxed_slice();
-        Message::from_box(b, len)
-    }
-
-    pub fn from_box(b: Box<[u8]>, len: usize) -> Self {
-        Message {
-            ptr: Box::into_raw(b),
-            len: len as _,
-        }
-    }
-
-    pub fn into_parts(self) -> (Box<[u8]>, u64) {
-        (unsafe { Box::from_raw(self.ptr) }, self.len)
-    }
-
-    pub fn len(&self) -> u64 {
-        self.len
-    }
+pub fn message_from_bytes(buffer: &[u8]) -> Message {
+    let len = buffer.len();
+    let b = buffer.to_vec().into_boxed_slice();
+    message_from_box(b, len)
 }
 
-impl Drop for Message {
-    fn drop(&mut self) {
-        let _v: Box<[u8]> = unsafe { Box::from_raw(self.ptr) };
-    }
+pub fn message_from_box(b: Box<[u8]>, len: usize) -> Message {
+    (Box::into_raw(b).cast(), len as _)
 }
 
 /// The token type for the array flavor.
@@ -121,8 +73,20 @@ pub struct Slot {
     /// The current stamp.
     stamp: AtomicU64,
 
-    /// The message in this slot.
-    msg: UnsafeCell<Message>,
+    /// Inlined message, to avoid allocations in go.
+    msg_ptr: UnsafeCell<*mut u8>,
+    msg_len: UnsafeCell<u64>,
+}
+
+impl AsRef<[u8]> for Slot {
+    fn as_ref(&self) -> &[u8] {
+        unsafe {
+            core::slice::from_raw_parts(
+                self.msg_ptr.get() as *const _,
+                self.msg_len.get().read().try_into().unwrap(),
+            )
+        }
+    }
 }
 
 #[repr(C)]
@@ -279,7 +243,8 @@ impl Channel {
         let slot: &Slot = &*(token.slot as *const Slot);
 
         // Write the message into the slot and update the stamp.
-        slot.msg.get().write(msg);
+        slot.msg_ptr.get().write(msg.0);
+        slot.msg_len.get().write(msg.1);
         slot.stamp.store(token.stamp, SeqCst);
 
         Ok(())
@@ -333,7 +298,7 @@ impl Channel {
 
         let slot: &Slot = &*(token.slot as *const Slot);
         // Read the message from the slot and update the stamp.
-        let msg = slot.msg.get().read();
+        let msg = (slot.msg_ptr.get().read(), slot.msg_len.get().read());
         slot.stamp.store(token.stamp, SeqCst);
 
         Ok(msg)
@@ -529,7 +494,7 @@ mod tests {
     fn make_message(i: u8) -> Message {
         let len = 10;
         let data = vec![i; len].into_boxed_slice();
-        Message::from_box(data, len)
+        message_from_box(data, len)
     }
 
     #[test]
@@ -538,6 +503,10 @@ mod tests {
             let msg = make_message(i);
             let _msg1 = msg.clone();
         }
+    }
+
+    fn msg_slice<'a>(msg: (*mut u8, u64)) -> &'a mut [u8] {
+        unsafe { core::slice::from_raw_parts_mut(msg.0, msg.1.try_into().unwrap()) }
     }
 
     #[test]
@@ -551,14 +520,14 @@ mod tests {
         let err = channel.try_send(msg).unwrap_err();
         match err {
             TrySendError::Full(msg) => {
-                assert_eq!(msg.as_ref(), &vec![10u8; 10]);
+                assert_eq!(msg_slice(msg), &vec![10u8; 10]);
             }
             _ => panic!(),
         }
 
         for i in 0..10 {
             let msg = channel.try_recv().unwrap();
-            assert_eq!(msg.as_ref(), &vec![i; 10]);
+            assert_eq!(msg_slice(msg), &vec![i; 10]);
         }
 
         assert_eq!(channel.try_recv(), Err(TryRecvError::Empty));

@@ -10,7 +10,6 @@ import "reflect"
 import "sync/atomic"
 import "runtime"
 import "unsafe"
-// import "fmt"
 
 var slotSize uintptr
 
@@ -43,6 +42,12 @@ func atomicLoadUint64(val *C.ulonglong) uint64 {
 	return atomic.LoadUint64((*uint64)(val))
 }
 
+func (c *Channel) IsFull() bool {
+	tail := atomicLoadUint64(&c.inner.tail)
+	head := atomicLoadUint64(&c.inner.head)
+	return head + uint64(c.inner.one_lap) == tail & ^uint64(c.inner.mark_bit)
+}
+
 // startSend attempts to reserve a slot for sending a message.
 func (r *Channel) startSend(token *C.struct_Token) bool {
 	backoff := NewBackoff()
@@ -50,11 +55,7 @@ func (r *Channel) startSend(token *C.struct_Token) bool {
 
 	for {
 		// Check if the channel is disconnected.
-		markBitSet := uint64(0)
-		if r.inner.mark_bit != 0 {
-			markBitSet = 1
-		}
-		if tail&markBitSet != 0 {
+		if (tail & uint64(r.inner.mark_bit)) != 0 {
 			token.slot = nil
 			token.stamp = 0
 			return true
@@ -69,7 +70,6 @@ func (r *Channel) startSend(token *C.struct_Token) bool {
 		slotPtr := uintptr(unsafe.Pointer(r.inner.buffer)) + offset
 		slot := (*C.struct_Slot)(unsafe.Pointer(slotPtr))
 		stamp := atomicLoadUint64(&slot.stamp)
-		// fmt.Println("wrote to slot", slotPtr, index, slotSize, r.inner.buffer)
 
 		// If the tail and the stamp match, we may attempt to push.
 		if tail == stamp {
@@ -88,7 +88,6 @@ func (r *Channel) startSend(token *C.struct_Token) bool {
 			// Try moving the tail.
 			if atomic.CompareAndSwapUint64((*uint64)(&r.inner.tail), tail, newTail) {
 				// Prepare the token for the folow-up call to `write`.
-				// fmt.Println("storing tail", slot, tail, newTail)
 				token.slot = slot
 				token.stamp = C.ulonglong(tail + 1)
 				return true
@@ -120,10 +119,9 @@ func (r *Channel) write(token *C.struct_Token, msg *Message) *Message {
 		return msg
 	}
 
-	// fmt.Println("writing to slot", token, msg, token.slot)
-	token.slot.msg = *msg
+	token.slot.msg_ptr = msg.ptr
+	token.slot.msg_len = msg.len
 	atomic.StoreUint64((*uint64)(&token.slot.stamp), uint64(token.stamp))
-	// fmt.Println("stored", token.slot)
 	return nil
 }
 
@@ -139,7 +137,6 @@ func defaultToken() Token {
 // return nil on success, message on error
 func (r *Channel) TrySend(msg *Message) *Message {
 	token := defaultToken()
-	// fmt.Println("sending", msg)
 	if r.startSend(&token) {
 		return r.write(&token, msg)
 	}
@@ -170,11 +167,7 @@ func (r *Channel) Send(msg *Message) *Message {
 }
 
 func (c *Channel) IsDisconnected() bool {
-	markBitSet := uint64(0)
-	if c.inner.mark_bit != 0 {
-		markBitSet = 1
-	}
-	return atomicLoadUint64(&c.inner.mark_bit)&markBitSet != 0
+	return atomicLoadUint64(&c.inner.mark_bit) & uint64(c.inner.mark_bit) != 0
 }
 
 func (c *Channel) read(token *Token) *Message {
@@ -183,10 +176,13 @@ func (c *Channel) read(token *Token) *Message {
 	}
 
 	slot := token.slot
-	msg := &slot.msg
+	msg := Message {
+		ptr: slot.msg_ptr,
+		len: slot.msg_len,
+	}
 	atomic.StoreUint64((*uint64)(&slot.stamp), uint64(token.stamp))
 
-	return msg
+	return &msg
 }
 
 func (c *Channel) startRecv(token *Token) bool {
@@ -263,12 +259,16 @@ func (c *Channel) TryRecv() *Message {
 }
 
 func (c *Channel) TryRecvRust() *Message {
-	msg := C.channel_try_recv(c.inner)
-	return msg
-}
-
-func DropMessage(msg *Message) {
-	C.drop_message(msg)
+	l := C.ulonglong(0)
+	ptr := C.channel_try_recv(c.inner, &l)
+	if ptr == nil {
+		return nil
+	}
+	
+	return &Message {
+		ptr: ptr,
+		len: l,
+	}
 }
 
 func (c *Channel) Recv() *Message {
@@ -321,21 +321,19 @@ func (c *Channel) Len() uint64 {
 	}
 }
 
-type Message = C.struct_Message
+type Message struct {
+	ptr *C.uchar
+	len C.ulonglong
+}
 
 func NewMessage(bytes []byte) Message {
 	l := C.ulonglong(len(bytes))
 	ptr := C.new_message_bytes((*C.uchar)(unsafe.Pointer(&bytes[0])), l)
 
-	msg := Message {
+	return Message {
 		ptr: ptr,
 		len: l,
 	}
-	// runtime.SetFinalizer(&msg, func(msg *Message) {
-	//  	C.drop_message_bytes(msg.ptr, msg.len)
-	// })
-	
-	return msg
 }
 
 func (msg *Message) Drop() {
