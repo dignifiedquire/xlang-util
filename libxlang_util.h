@@ -28,6 +28,9 @@ struct Channel *new_channel(uint32_t cap);
 
 void drop_channel(struct Channel *channel_ptr);
 
+uint8_t* channel_send(struct Channel *channel_ptr, uint8_t *ptr, uint64_t len);
+
+uint8_t* channel_recv(struct Channel *channel_ptr, uint64_t *out_len);
 uint8_t* channel_try_recv(struct Channel *channel_ptr, uint64_t *out_len);
 
 uint8_t *new_message_bytes(const uint8_t *ptr, uint64_t len);

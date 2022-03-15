@@ -104,6 +104,72 @@ func TestSendRecv(t *testing.T) {
 	}
 }
 
+func TestSendGoRecvRust(t *testing.T) {
+	c := golang_util.NewChannel(10)
+	for i := 0; i < 10 ; i++ {
+		msg := makeMessage(byte(i))
+		defer msg.Drop()
+
+		if c.Send(&msg) != nil {
+			t.Fatalf("failed to send message %v", i)
+		}
+	}
+
+	// channel is full
+	if !c.IsFull() {
+		t.Fatalf("channel is full")
+	}
+
+	for i := 0; i < 10 ; i++ {
+		msg := c.RecvRust()
+		if msg == nil {
+			t.Fatalf("failed to recv message %v", i)
+		}
+		if msg.Len() != 10 {
+			t.Fatalf("wrong message length received")
+		}
+		bytes := msg.Bytes()
+		for k := range bytes {
+			if bytes[k] != byte(i) {
+				t.Fatalf("wrong message bytes received")
+			}
+		}
+	}
+}
+
+func TestSendRecvRust(t *testing.T) {
+	c := golang_util.NewChannel(10)
+	for i := 0; i < 10 ; i++ {
+		msg := makeMessage(byte(i))
+		// defer msg.Drop()
+
+		if c.SendRust(&msg) != nil {
+			t.Fatalf("failed to send message %v", i)
+		}
+	}
+
+	// channel is full
+	if !c.IsFull() {
+		t.Fatalf("channel is full")
+	}
+
+	for i := 0; i < 10 ; i++ {
+		msg := c.RecvRust()
+		if msg == nil {
+			t.Fatalf("failed to recv message %v", i)
+		}
+		if msg.Len() != 10 {
+			t.Fatalf("wrong message length received")
+		}
+		bytes := msg.Bytes()
+		for k := range bytes {
+			if bytes[k] != byte(i) {
+				t.Fatalf("wrong message bytes received")
+			}
+		}
+	}
+}
+
 func TestSendRecvPar(t *testing.T) {
 	c := golang_util.NewChannel(10)
 	done := make(chan bool)
@@ -121,6 +187,44 @@ func TestSendRecvPar(t *testing.T) {
 	go func() {
 		for i := 0; i < 100 ; i++ {
 			msg := c.Recv()
+			if msg == nil {
+				t.Fatalf("failed to recv message %v", i)
+			}
+			if msg.Len() != 10 {
+				t.Fatalf("wrong message length received")
+			}
+			bytes := msg.Bytes()
+			for k := range bytes {
+				if bytes[k] != byte(i) {
+					t.Fatalf("wrong message bytes received: %v (%v)", bytes, byte(i))
+				}
+			}
+			msg.Drop()
+		}
+		done <- true
+	}()
+
+	<- done
+}
+
+
+func TestSendRecvRustPar(t *testing.T) {
+	c := golang_util.NewChannel(10)
+	done := make(chan bool)
+
+	go func() {
+		for i := 0; i < 100 ; i++ {
+			msg := makeMessage(byte(i))
+
+			if c.SendRust(&msg) != nil {
+				t.Fatalf("failed to send message %v", i)
+			}
+		}
+	}()
+
+	go func() {
+		for i := 0; i < 100 ; i++ {
+			msg := c.RecvRust()
 			if msg == nil {
 				t.Fatalf("failed to recv message %v", i)
 			}
@@ -285,4 +389,61 @@ func BenchmarkByteSliceChannelCap10(b *testing.B) {
 	}
 }
 
+func BenchmarkCgoCgoSendRecvCap10(b *testing.B) {
+	// Send from Rust -> Rust
 
+	ch := golang_util.NewChannel(10)
+
+	go func() {
+		for {
+			_ = ch.RecvRust()
+		}
+	}()
+
+	msg := makeMessage(10)
+	defer msg.Drop()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		ch.SendRust(&msg)
+	}
+}
+
+func BenchmarkGoCgoSendRecvCap10(b *testing.B) {
+	// Send from Go -> Rust
+	ch := golang_util.NewChannel(10)
+
+	go func() {
+		for {
+			_ = ch.RecvRust()
+		}
+	}()
+
+	msg := makeMessage(10)
+	// defer msg.Drop()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		ch.Send(&msg)
+	}
+}
+
+func BenchmarkCgoGoSendRecvCap10(b *testing.B) {
+	// Send from Rust -> Go
+	
+	ch := golang_util.NewChannel(10)
+
+	go func() {
+		for {
+			_ = ch.Recv()
+		}
+	}()
+
+	msg := makeMessage(10)
+	defer msg.Drop()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		ch.SendRust(&msg)
+	}
+}

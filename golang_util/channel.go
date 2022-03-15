@@ -144,26 +144,22 @@ func (r *Channel) TrySend(msg *Message) *Message {
 }
 
 func (r *Channel) Send(msg *Message) *Message {
-	token := defaultToken()
-	for {
-		// Try sending a message several times.
-		backoff := NewBackoff()
-		for {
-			if r.startSend(&token) {
-				return r.write(&token, msg)
-			}
-		}
-
-		if backoff.IsCompleted() {
-			break
-		} else {
-			backoff.Snooze()
-		}
-
-		backoff.Spin()
+	// fast path
+	if r.TrySend(msg) == nil {
+		return nil
 	}
 
-	return nil
+	// slow path
+	return r.SendRust(msg)
+}
+
+func (c *Channel) SendRust(msg *Message) *Message {
+	ptr := C.channel_send(c.inner, msg.ptr, msg.len)
+	if ptr == nil {
+		return nil
+	}
+	
+	return &Message { ptr: ptr, len: msg.len }
 }
 
 func (c *Channel) IsDisconnected() bool {
@@ -271,28 +267,27 @@ func (c *Channel) TryRecvRust() *Message {
 	}
 }
 
+func (c *Channel) RecvRust() *Message {
+	l := C.ulonglong(0)
+	ptr := C.channel_recv(c.inner, &l)
+	if ptr == nil {
+		return nil
+	}
+	
+	return &Message {
+		ptr: ptr,
+		len: l,
+	}
+}
+
 func (c *Channel) Recv() *Message {
-	token := defaultToken()
-
-	for {
-		// Try receiving a message several times.
-		backoff := NewBackoff()
-		for {
-			if c.startRecv(&token) {
-				return c.read(&token)
-			}
-
-			if backoff.IsCompleted() {
-				break
-			} else {
-				backoff.Snooze()
-			}
-		}
-
-		backoff.Spin()
+	// fast path
+	if msg := c.TryRecv(); msg != nil {
+		return msg
 	}
 
-	return nil
+	// slow path
+	return c.RecvRust()
 }
 
 // Len returns the current number of messages inside the channel.
